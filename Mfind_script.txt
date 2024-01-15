@@ -1,0 +1,741 @@
+package biomarker1;
+/*
+a Fastfile class for reading
+*/
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+
+public class FastaFileConsole {                                                 //a fasta file reader
+
+    ArrayList<Secuencia> secuencias;
+
+    public void use(String path) {
+        ArchivoFasta af = new ArchivoFasta();
+        this.secuencias = af.AbrirArchivo(path);                                //stablish the path for file read
+        int t = af.Tamaño();
+        System.out.println("Número de secuencias: " + t);
+    }
+
+    public ArrayList armaSeqs() {
+        ArrayList seqs = new ArrayList();
+        for (int x = 0; x < secuencias.size(); x++) {
+            seqs.add((String) secuencias.get(x)._secuencia);                    //build an arrayList with the sequences
+        }
+        return seqs;
+    }
+
+    public ArrayList armaNames() {                                              //build an arrayList with the sequences names
+        ArrayList names = new ArrayList();
+        for (int x = 0; x < secuencias.size(); x++) {
+            names.add((String) secuencias.get(x)._nombre);
+        }
+        return names;
+    }
+
+    public static class Secuencia {
+
+        public String _nombre;
+        public String _secuencia;
+    }
+
+    public static class ArchivoFasta {
+
+        public ArrayList<Secuencia> secuencias;
+
+        public ArrayList<Secuencia> AbrirArchivo(String ruta) {
+            secuencias = new ArrayList<Secuencia>();
+            int numero = 1;
+            try {
+                BufferedReader in = new BufferedReader(new FileReader(ruta));
+                String line = null;
+                while ((line = in.readLine()) != null) {                        //read the file while there is still a line left
+                    int n = line.length();
+                    if (n > 0) {
+                        boolean i = line.startsWith(">");
+                        if (i) {
+                            Secuencia _s = new Secuencia();
+                            _s._nombre = line;
+                            secuencias.add(_s);
+                        } else {
+                            if (secuencias.get(secuencias.size() - 1)._secuencia == null) {
+                                secuencias.get(secuencias.size() - 1)._secuencia = line;
+                            } else {
+                                secuencias.get(secuencias.size() - 1)._secuencia += line;
+                            }
+                        }
+                    }
+                }
+                in.close();
+            } catch (IOException ex) {
+                System.out.println(numero);
+                System.out.println(ex.getMessage());
+            }
+            return secuencias;
+        }
+
+        public Secuencia BuscarCadena(int n) {
+            if (n < Tamaño()) {                                                 //returns a given sequence with its index number
+                return secuencias.get(n);
+            } else {
+                return null;
+            }
+        }
+
+        public int Tamaño() {
+            return secuencias.size();
+        }
+    }
+}
+
+
+
+
+package biomarker1;
+
+/*
+ * Paralell process for microsatellite search
+ */
+
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class goParal {
+
+    ArrayList Respaldo = new ArrayList();
+
+    public void primerCorrida(int inic, int finl, int filtro, String subseq, String path) throws InstantiationException, ClassNotFoundException, IllegalAccessException {
+        ArrayList seqs = new ArrayList();
+        ArrayList workers = new ArrayList();
+        ArrayList names = new ArrayList();
+        FastaFileConsole FR = new FastaFileConsole();
+        panel panel = new panel();
+        panel.filtro = filtro;
+        panel.subseq = subseq;
+        panel.tamanio_final = finl;
+        panel.tamanio_inicial = inic;
+        panel.path = path;
+        panel.actualiza();
+        System.out.println(panel.path);
+
+        
+        FR.use(panel.path);
+        seqs = FR.armaSeqs();
+        names = FR.armaNames();
+
+        this.Respaldo = (ArrayList) seqs.clone();
+
+        names.add(">MicroSat");
+        final String name1 = (String) names.get(0);                             //saves the first sequence as the problem sequence
+        final String S1 = (String) seqs.get(0);
+        seqs.remove(0);
+        names.remove(0);
+        panel.seqs = seqs;
+        panel.names = names;
+        String SubSeqS1 = "";
+        int rangooffsetA = inic;
+        int rangooffsetB = finl;
+        worker wk1 = new worker();                                              //the parallel readers are named workers
+        worker wk2 = new worker();
+        ArrayList record = new ArrayList();
+
+        for (int i = rangooffsetA; i <= rangooffsetB; i++) {
+            int offset = i;
+            int indxI = 0;
+            int indxF = indxI + offset;
+            System.out.println("longitud actual: " + offset);                   //stablish the microsatellite length 
+            int contador = 0;
+            Class miclase = Class.forName("biomarker1.worker");
+            printer printer = new printer();
+            while (indxF <= S1.length()) {
+                int c = 0;//**
+                while (seqs.size() > 0) {
+                    System.out.println("seqs size " + seqs.size());
+                    if (indxF <= S1.length()) {
+                        SubSeqS1 = S1.substring(indxI, indxF);
+                        String sTextoBuscado = SubSeqS1;
+                        wk1.setup(sTextoBuscado, (String) seqs.get(seqs.size() - 1), seqs.size() - 1, printer);
+                        seqs.remove(seqs.size() - 1);
+                        wk2.setup(sTextoBuscado, (String) seqs.get(seqs.size() - 1), seqs.size() - 1, printer);
+                        seqs.remove(seqs.size() - 1);
+                        wk1.start();                                            //start the work
+                        wk2.start();
+                        try {
+                            wk2.join();
+                            wk1.join();
+                        } catch (InterruptedException ex) {
+                            Logger.getLogger(goParal.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                        wk1 = (worker) miclase.newInstance();
+                        wk2 = (worker) miclase.newInstance();
+
+                    }
+
+                    System.gc();
+                }
+                indxI++;
+                indxF++;
+                while (this.compruebaBusy(workers) > 0) {                       //empty
+                }
+                workers.clear();
+            }
+        }
+    }
+
+    public void otraCorrida(int inic, int finl, int filtro, String subseq, String path) throws ClassNotFoundException, InstantiationException, IllegalAccessException {
+                                                                                //process for a second run
+        ArrayList seqs = new ArrayList();
+        ArrayList workers = new ArrayList();
+        ArrayList names = new ArrayList();
+        FastaFileConsole FR = new FastaFileConsole();
+        panel panel = new panel();
+        panel.filtro = filtro;
+        panel.subseq = subseq;
+        panel.tamanio_final = finl;
+        panel.tamanio_inicial = inic;
+        panel.path = path;
+        panel.actualiza();
+        System.out.println(panel.path);
+        seqs = (ArrayList) this.Respaldo.clone();
+        System.out.println("segunda vez!!");
+        names.add(">Human");
+        String name1 = (String) names.get(0);
+        String S1 = (String) seqs.get(0);
+        seqs.remove(0);
+        names.remove(0);
+        panel.seqs = seqs;
+        panel.names = names;
+        String SubSeqS1 = "";
+
+        int rangooffsetA = inic;
+        int rangooffsetB = finl;
+        ArrayList record = new ArrayList();
+
+        for (int i = rangooffsetA; i <= rangooffsetB; i++) {
+            int offset = i;
+            int indxI = 0;
+            int indxF = indxI + offset;
+            int contador = 0;
+
+            String SeqTurno = null;
+            Class miclase = Class.forName("biomarker1.worker");
+            printer printer = new printer();
+
+            while (indxF <= S1.length()) {
+                int c = 0;//**
+                while (c <= seqs.size() - 1) {
+                    if (this.compruebaBusy(workers) <= 4) {
+                        SeqTurno = (String) seqs.get(c);
+                        if (indxF <= S1.length()) {                               //creates worker
+                            SubSeqS1 = S1.substring(indxI, indxF);
+                            String sTextoBuscado = SubSeqS1;
+                            worker miobjeto = (worker) miclase.newInstance();
+                            miobjeto.setup(sTextoBuscado, SeqTurno, c, printer);
+                            miobjeto.start();
+                            workers.add(miobjeto);
+
+                            c++;
+                        }
+                    }
+                    System.gc();
+                }
+                indxI++;
+                indxF++;
+                while (this.compruebaBusy(workers) > 0) {                       //vacía
+                }
+                workers.clear();
+            }
+        }
+    }
+
+    public int compruebaBusy(ArrayList Lista) {                                 //validation of busy readers
+        Iterator iT = Lista.iterator();
+        int c = 0;
+        while (iT.hasNext()) {
+            worker rd = new worker();
+            rd = (worker) iT.next();
+            if (rd.isAlive()) {
+                c++;
+            } else {
+                iT.remove();
+            }
+        }
+        return c;
+    }
+}
+
+
+package biomarker1;
+
+/**
+ * MFind Sofware Rios-Willars
+ * This code searches for microsatellites in a multifasta file
+ * uses a sliding window and a parallel process for the search
+ */
+
+public class Inicio {
+
+    public static void main(String[] args) {          //The begining
+        panel panel = new panel();
+        panel.setVisible(true);
+    }
+}
+
+
+package biomarker1;
+
+/*
+* Process for microsatellite count on a given slide window
+*/
+
+import java.util.ArrayList;
+
+public class motifCounter {
+
+    ArrayList seqs;
+    ArrayList names;
+
+    motifCounter(ArrayList seqs, ArrayList names) {
+        this.seqs = seqs;
+        this.names = names;
+    }
+
+    public String find(String motif) {
+        String sTextoBuscado = motif;
+        int contador = 0;
+        int numSeqTurno = 0;
+        String S = "";
+
+        for (Object seq : seqs) {
+            contador = 0;
+            String SeqTurno = (String) seq;
+            String sTexto = SeqTurno;
+            while (sTexto.contains(sTextoBuscado)) {
+                sTexto = sTexto.substring(sTexto.indexOf(sTextoBuscado) + 1);
+                contador++;                                                     //increment the counter while the window containes the microsatellite
+            }
+            System.out.println("For sequence " + names.get(numSeqTurno) + " And subsequence " + sTextoBuscado + " hit count: " + contador);
+            S = S + " \n For sequence " + names.get(numSeqTurno) + " And subsequence " + sTextoBuscado + " hit count: " + contador + "\n";
+            numSeqTurno++;
+        }
+        S = S + "--------------------------\n ";
+        return S;
+    }
+}
+
+
+
+
+package biomarker1;
+/*
+the graphic inteface
+*/
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.swing.JFileChooser;
+
+public class panel extends javax.swing.JFrame {
+
+    ArrayList seqs;
+    ArrayList names;
+    int tamanio_inicial;
+    int tamanio_final;
+    int filtro;
+    String subseq;
+    String path;
+    goParal goParal = new goParal();
+
+    public panel() {
+        initComponents();
+        this.setTitle("Mfind");
+    }
+
+    @SuppressWarnings("unchecked")
+    // <editor-fold defaultstate="collapsed" desc="Generated Code">                          
+    private void initComponents() {
+
+        txt_tinicial = new javax.swing.JTextField();
+        jLabel1 = new javax.swing.JLabel();
+        jLabel3 = new javax.swing.JLabel();
+        txt_subseq = new javax.swing.JTextField();
+        jLabel4 = new javax.swing.JLabel();
+        txt_filtro = new javax.swing.JTextField();
+        jScrollPane1 = new javax.swing.JScrollPane();
+        jTextArea1 = new javax.swing.JTextArea();
+        jButton1 = new javax.swing.JButton();
+        btn_reporte = new javax.swing.JButton();
+        jButton2 = new javax.swing.JButton();
+
+        setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
+
+        txt_tinicial.setText("4");
+        txt_tinicial.setName(""); // NOI18N
+        txt_tinicial.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                txt_tinicialActionPerformed(evt);
+            }
+        });
+
+        jLabel1.setText("Size");
+
+        jLabel3.setText("Find Microsatellites");
+
+        txt_subseq.setText("Type a subsequence..");
+        txt_subseq.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                txt_subseqActionPerformed(evt);
+            }
+        });
+
+        jLabel4.setText("Count hits for this sub sequence");
+
+        txt_filtro.setText("100");
+        txt_filtro.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                txt_filtroActionPerformed(evt);
+            }
+        });
+
+        jTextArea1.setColumns(20);
+        jTextArea1.setRows(5);
+        jTextArea1.setText("Rios-Willars 2023\n\n1- Select your Fasta File and make sure there is a microSatellite first sequence\n2- Set the microSatellite size \n3- Hit Search Button\n4- Enjoy at Documents\\\\mfind_out.csv");
+        jScrollPane1.setViewportView(jTextArea1);
+
+        jButton1.setText("Search");
+        jButton1.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton1ActionPerformed(evt);
+            }
+        });
+
+        btn_reporte.setText("Go");
+        btn_reporte.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                btn_reporteActionPerformed(evt);
+            }
+        });
+
+        jButton2.setText("Select Fasta");
+        jButton2.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton2ActionPerformed(evt);
+            }
+        });
+
+        javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
+        getContentPane().setLayout(layout);
+        layout.setHorizontalGroup(
+            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(layout.createSequentialGroup()
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addGroup(layout.createSequentialGroup()
+                        .addGap(23, 23, 23)
+                        .addComponent(jButton2)
+                        .addGap(50, 50, 50)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(jLabel1)
+                            .addComponent(txt_tinicial, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE))
+                        .addGap(175, 175, 175)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(layout.createSequentialGroup()
+                                .addGap(226, 226, 226)
+                                .addComponent(jLabel4, javax.swing.GroupLayout.PREFERRED_SIZE, 0, javax.swing.GroupLayout.PREFERRED_SIZE))
+                            .addGroup(layout.createSequentialGroup()
+                                .addComponent(txt_filtro, javax.swing.GroupLayout.PREFERRED_SIZE, 0, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(1, 1, 1)
+                                .addComponent(jLabel3)
+                                .addGap(18, 18, 18)
+                                .addComponent(jButton1)))
+                        .addGap(162, 162, 162)
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(layout.createSequentialGroup()
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addComponent(txt_subseq, javax.swing.GroupLayout.PREFERRED_SIZE, 0, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(292, 292, 292))
+                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addComponent(btn_reporte, javax.swing.GroupLayout.PREFERRED_SIZE, 0, javax.swing.GroupLayout.PREFERRED_SIZE))))
+                    .addGroup(javax.swing.GroupLayout.Alignment.LEADING, layout.createSequentialGroup()
+                        .addContainerGap()
+                        .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 1063, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addContainerGap())
+        );
+        layout.setVerticalGroup(
+            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(layout.createSequentialGroup()
+                .addGap(34, 34, 34)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel4)
+                    .addComponent(jLabel1))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(txt_tinicial, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(txt_filtro, javax.swing.GroupLayout.PREFERRED_SIZE, 0, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(txt_subseq, javax.swing.GroupLayout.PREFERRED_SIZE, 1, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jButton1)
+                    .addComponent(btn_reporte, javax.swing.GroupLayout.PREFERRED_SIZE, 2, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jButton2)
+                    .addComponent(jLabel3))
+                .addGap(29, 29, 29)
+                .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 533, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+        );
+
+        pack();
+    }// </editor-fold>                        
+    public void publica(String s) {
+        String texto = jTextArea1.getText();
+        this.jTextArea1.setText(texto + s);
+    }
+
+    public void actualiza() {
+        this.txt_filtro.setText(Integer.toString(this.filtro));
+        this.txt_subseq.setText(this.subseq);
+        this.txt_tinicial.setText(Integer.toString(this.tamanio_inicial));
+    }
+
+    private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {                                         
+        if (this.path != null) {
+            this.filtro = Integer.parseInt(this.txt_filtro.getText());
+            this.subseq = this.txt_subseq.getText();
+            this.tamanio_inicial = Integer.parseInt(this.txt_tinicial.getText());
+            this.tamanio_final = this.tamanio_inicial; //Integer.parseInt(this.txt_tfinal.getText());
+            if (goParal.Respaldo.size() == 0) {
+                try {
+                    goParal.primerCorrida(tamanio_inicial, tamanio_final, filtro, subseq, path);
+                    System.out.println("Terminado -- ");
+                } catch (InstantiationException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (ClassNotFoundException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (IllegalAccessException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            } else {
+                try {
+                    goParal.otraCorrida(tamanio_inicial, tamanio_final, filtro, subseq, path);
+                    System.out.println("Terminado -- ");
+                } catch (InstantiationException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (ClassNotFoundException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (IllegalAccessException ex) {
+                    Logger.getLogger(panel.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }
+
+        } else
+            this.jTextArea1.setText("Select you fasta file!");
+    }                                        
+
+    private void txt_tinicialActionPerformed(java.awt.event.ActionEvent evt) {                                             
+        // TODO add your handling code here:
+    }                                            
+
+    private void txt_subseqActionPerformed(java.awt.event.ActionEvent evt) {                                           
+        // TODO add your handling code here:
+    }                                          
+
+    private void btn_reporteActionPerformed(java.awt.event.ActionEvent evt) {                                            
+        if (!"Type a subsequence..".equals(this.txt_subseq.getText()) && !"What are you searching for?".equals(this.txt_subseq.getText()) && this.path != null) {
+            motifCounter mC = new motifCounter(seqs, names);
+            this.jTextArea1.setText(this.jTextArea1.getText() + " " + mC.find(this.txt_subseq.getText()));
+        } else
+            this.txt_subseq.setText("What are you searching for?");
+    }                                           
+
+    private void jButton2ActionPerformed(java.awt.event.ActionEvent evt) {                                         
+        JFileChooser abrirArchivo;
+        abrirArchivo = new JFileChooser();
+        abrirArchivo.showOpenDialog(this);
+        File f = abrirArchivo.getSelectedFile();
+        this.jTextArea1.setText(f.getAbsolutePath());
+        this.path = f.getAbsolutePath();
+    }                                        
+
+    private void txt_filtroActionPerformed(java.awt.event.ActionEvent evt) {                                           
+    }                                          
+    public static void main(String args[]) {
+
+        java.awt.EventQueue.invokeLater(new Runnable() {
+            public void run() {
+                new panel().setVisible(true);
+            }
+        });
+    }
+
+    // Variables declaration - do not modify                     
+    private javax.swing.JButton btn_reporte;
+    private javax.swing.JButton jButton1;
+    private javax.swing.JButton jButton2;
+    private javax.swing.JLabel jLabel1;
+    private javax.swing.JLabel jLabel3;
+    private javax.swing.JLabel jLabel4;
+    private javax.swing.JScrollPane jScrollPane1;
+    private javax.swing.JTextArea jTextArea1;
+    private javax.swing.JTextField txt_filtro;
+    private javax.swing.JTextField txt_subseq;
+    private javax.swing.JTextField txt_tinicial;
+    // End of variables declaration                   
+}
+
+
+
+
+package biomarker1;
+/*
+this class builds a csv file with the microsatellite findings
+*/
+
+import java.io.FileWriter;
+import java.io.PrintWriter;
+
+public class printer {
+
+    boolean busy;
+
+    public void print(String line) {
+        busy = true;
+        FileWriter fichero = null;
+        PrintWriter pw = null;
+        try {
+            fichero = new FileWriter("C:\\Users\\ernes\\OneDrive\\Documents\\mfind_out.csv", true);  //change the destination if you like. Create it first!!
+            pw = new PrintWriter(fichero);
+            pw.println(line);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (null != fichero) {
+                    fichero.close();
+                }
+            } catch (Exception e2) {
+                e2.printStackTrace();
+            }
+            busy = false;
+        }
+    }
+}
+
+
+
+
+package biomarker1;
+/*
+the class for the parallel reader
+*/
+
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class reader extends Thread {
+
+    String S;
+    public RandomAccessFile fichero = null;
+    int numLines;
+    boolean busy;
+
+    public void setup(String archa) throws IOException {
+        this.fichero = new RandomAccessFile(archa, "r");
+    }
+
+    @Override
+    public void run() {                                                         // this is the process that runs in parallel threads
+        this.busy = true;
+        try {
+            fichero.seek(0);
+        } catch (IOException ex) {
+            Logger.getLogger(reader.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        String cadena = null;
+        try {
+            cadena = fichero.readLine();
+        } catch (IOException ex) {
+            Logger.getLogger(reader.class.getName()).log(Level.SEVERE, null, ex);
+        }
+
+        int c = 0;
+        while (cadena != null) {
+            this.S += cadena;
+            c++;
+            try {
+                cadena = fichero.readLine();
+            } catch (IOException ex) {
+                Logger.getLogger(reader.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        try {
+            fichero.close();
+        } catch (IOException ex) {
+            Logger.getLogger(reader.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        this.busy = false;
+    }
+}
+
+
+
+
+package biomarker1;
+/*
+The class for the microsatellite search. this process runs un parallel threads
+*/
+
+import static java.lang.Math.random;
+import java.util.Random;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public class worker extends Thread {
+
+    String sproblema;
+    String seq;
+    boolean busy;
+    int archivoNum;
+    printer printer;
+    int cnt;
+
+    public void setup(String sproblema, String seq, int archivoNum, printer printer) {
+        this.sproblema = new String(sproblema);
+        this.seq = new String(seq);
+        this.archivoNum = archivoNum;
+        this.printer = printer;
+        this.cnt = 0;
+    }
+
+    @Override
+    public void run() {
+        busy = true;
+        boolean done = false;
+        Random rn = new Random();
+        while (seq.contains(sproblema)) {                                       //validation and count of the microsatellite
+            seq = seq.substring(seq.indexOf(sproblema) + 1);
+            this.cnt++;
+            System.gc();
+            done = false;
+        }
+        this.busy = false;
+        String line = " " + sproblema + ", hits: ," + Integer.toString(cnt) + ", Seq Num: ," + archivoNum + " , ";
+        System.out.println(line);
+        while (done == false) {
+            if (printer.busy == false) {
+                printer.print(line);
+                done = true;
+            }
+            for (int r = 0; r < rn.nextInt(100); r++) {
+            }
+        }
+    }
+}
